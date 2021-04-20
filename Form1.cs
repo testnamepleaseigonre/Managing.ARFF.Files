@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace Managing.ARFF.Files
@@ -11,13 +12,32 @@ namespace Managing.ARFF.Files
         private List<string> listOfAllAttributeNames;
         private List<string> dataReadyToWrite;
         private List<string> attributesReadyToWrite;
+        private ManualResetEvent mre = new ManualResetEvent(true);
+        private List<string> reliableFilesInDirectory;
+        private CancellationTokenSource cts;
         private string relation;
 
         public Form1()
         {
             InitializeComponent();
+            mre = new ManualResetEvent(true);
+            dataReadyToWrite = new List<string>();
+            attributesReadyToWrite =new List<string>();
             listOfAllAttributeNames = new List<string>();
+            combineButton.Enabled = false;
+            checkedListBoxAll.Enabled = false;
+            button1.Enabled = false;
+            button2.Enabled = false;
+            pauseButton.Enabled = false;
+            continueButton.Enabled = false;
+            stopButton.Enabled = false;
+            // --HELPERS
             catalogPathTextBox.Text = "C:\\Users\\valde\\Desktop\\arff-test";
+            setReliableFiles(catalogPathTextBox.Text);
+            // --HELPERS
+            progressBar.Minimum = 0;
+            progressBar.Value = 0;
+            progressBar.Step = 1;
         }
 
         private void chooseCatalogButton_Click(object sender, EventArgs e)
@@ -29,90 +49,144 @@ namespace Managing.ARFF.Files
                 listOfAllAttributeNames = new List<string>();
                 dataReadyToWrite = new List<string>();
                 attributesReadyToWrite = new List<string>();
-                richTextBox1.Text = null;
+                reliableFilesInDirectory = new List<string>();
                 checkedListBoxAll.Items.Clear();
+                setReliableFiles(dialog.SelectedPath);
             }
+        }
+
+        private void setReliableFiles(string folderPath)
+        {
+            Thread th = new Thread(() =>
+            {
+                blockUnblockButtonsForCombine(false);
+                reliableFilesInDirectory = new List<string>();
+                int attrCount = 0;
+                int dataCount = 0;
+                string allData;
+                string line;
+                bool fileHasDataTag = false;
+                foreach (string file in Directory.GetFiles(folderPath, "*.arff", SearchOption.TopDirectoryOnly))
+                {
+                    try
+                    {
+                        if (Path.GetExtension(file) == ".arff")
+                        {
+                            StreamReader ongoingFile = new StreamReader(file);
+                            if (ongoingFile.ReadLine().Contains("@relation"))
+                            {
+                                while ((line = ongoingFile.ReadLine()) != null)
+                                {
+                                    if (line.Contains("@attribute") == true)
+                                    {
+                                        attrCount++;
+                                    }
+                                    if (line.Contains("@data") == true)
+                                    {
+                                        fileHasDataTag = true;
+                                        ongoingFile.ReadLine();
+                                        allData = ongoingFile.ReadLine();
+                                        dataCount = allData.Split(',').Length;
+                                        ongoingFile.Close();
+                                        break;
+                                    }
+                                }
+                                if (fileHasDataTag == true)
+                                {
+                                    if (dataCount == attrCount)
+                                    {
+                                        reliableFilesInDirectory.Add(file);
+                                        //Console.WriteLine(file);
+                                    }
+                                    else
+                                    {
+                                        throw new Exception($"File skipped [{Path.GetFileName(file)}]: data is corrupted!");
+                                    }
+                                }
+                                else
+                                {
+                                    throw new Exception($"File skipped [{Path.GetFileName(file)}]: \"@data\" tag not found!");
+                                }
+                            }
+                            else
+                            {
+                                throw new Exception($"File skipped[{Path.GetFileName(file)}]: \"@realation\" tag not found!");
+                            }
+                        }
+                        else
+                        {
+                            throw new Exception($"File skipped[{Path.GetFileName(file)}]: extention is not \".arff\"!");
+                        }
+                    }
+                    catch (Exception exc)
+                    {
+                        Console.WriteLine(exc.Message);
+                    }
+                    attrCount = 0;
+                    fileHasDataTag = false;
+                    
+                }
+                blockUnblockButtonsForCombine(true);
+            });
+            th.Name = "SetReliableFiles thread";
+            th.Start();
         }
 
         private void button1_Click(object sender, EventArgs e)
         {
-            button1.Enabled = false;
             try
             {
-                richTextBox1.Text = null;
-                dataReadyToWrite = new List<string>();
-                attributesReadyToWrite = new List<string>();
-                listOfAllAttributeNames = new List<string>();
-                checkedListBoxAll.Items.Clear();
-                getAllAttributes(catalogPathTextBox.Text);
+                Thread th1 = new Thread(() => getAllAttributes(catalogPathTextBox.Text));
+                th1.Name = "Attribute getting thread";
+                th1.Start();
             }
             catch(Exception exc)
             {
                 MessageBox.Show(exc.Message);
             }
-            button1.Enabled = true;
         }
 
         private void getAllAttributes(string folderPath)
         {
-            relation = null;
-            string line;
-            bool fileIsUsable = false;
-            string[] files = Directory.GetFiles(folderPath, "*.arff", SearchOption.TopDirectoryOnly);
-            foreach (string file in files)
+            Thread th = new Thread(() =>
             {
-                try
+                blockUnblockButtonsForCombine(false);
+                string line;
+                dataReadyToWrite = new List<string>();
+                attributesReadyToWrite = new List<string>();
+                listOfAllAttributeNames = new List<string>();
+                Invoke((Action)delegate 
                 {
-                    if (Path.GetExtension(file) == ".arff")
+                    checkedListBoxAll.Items.Clear(); 
+                });
+                StreamReader ongoingFile = new StreamReader(reliableFilesInDirectory[0]);
+                relation = ongoingFile.ReadLine();
+                while ((line = ongoingFile.ReadLine()) != null)
+                {
+                    if (line.Contains("@attribute") == true)
                     {
-                        StreamReader ongoingFile = new StreamReader(file);
-                        if(relation == null)
-                            relation = ongoingFile.ReadLine();
-                        if (relation.Contains("@relation"))
-                        {
-                            while ((line = ongoingFile.ReadLine()) != null)
-                            {
-                                if (line.Contains("@attribute") == true)
-                                {
-                                    listOfAllAttributeNames.Add(line);
-                                }
-                                if (line.Contains("@data") == true)
-                                {
-                                    fileIsUsable = true;
-                                }
-                            }
-                            if (fileIsUsable == true)
-                            {
-                                foreach (string attr in listOfAllAttributeNames)
-                                {
-                                    checkedListBoxAll.Items.Add(attr);
-                                }
-                                Console.WriteLine($"Found attributes: {listOfAllAttributeNames.Count}");
-                                //Console.WriteLine($"Found [.arff] files: {files.Length}");
-                                ongoingFile.Close();
-                                break;
-                            }
-                            else
-                            {
-                                throw new Exception($"File skipped [{Path.GetFileName(file)}]: \"@data\" tag not found!");
-                            }
-                        }
-                        else
-                        {
-                            throw new Exception($"File skipped[{Path.GetFileName(file)}]: \"@realation\" tag not found!");
-                        }
+                        listOfAllAttributeNames.Add(line);
                     }
-                    else
+                    else if(line.Contains("@data"))
                     {
-                        throw new Exception($"File skipped[{Path.GetFileName(file)}]: extention is not \".arff\"!");
+                        break;
                     }
                 }
-                catch(Exception exc)
+                moveAttributesToListBox();
+                blockUnblockButtonsForCombine(true);
+            });
+            th.Name = "GetAttributes thread";
+            th.Start();
+        }
+
+        private void moveAttributesToListBox()
+        {
+            foreach (string attr in listOfAllAttributeNames)
+            {
+                Invoke((Action)delegate
                 {
-                    relation = null;
-                    listOfAllAttributeNames.Clear();
-                    Console.WriteLine(exc.Message);
-                }
+                    checkedListBoxAll.Items.Add(attr);
+                });
             }
         }
 
@@ -144,22 +218,34 @@ namespace Managing.ARFF.Files
             }
         }
 
+        private List<string> setCheckedItemsToList()
+        {
+            List<string> temp = new List<string>();
+            foreach (string attr in checkedListBoxAll.CheckedItems)
+            {
+                temp.Add(attr);
+            }
+            return temp;
+        }
+
         private void combineButton_Click(object sender, EventArgs e)
         {
-            button1.Enabled = false;
-            chooseCatalogButton.Enabled = false;
-            button2.Enabled = false;
-            checkedListBoxAll.Enabled = false;
             if (checkedListBoxAll.Items.Count != 0)
             {
                 if(checkedListBoxAll.CheckedItems.Count != 0)
                 {
                     try
                     {
-                        dataReadyToWrite = new List<string>();
-                        attributesReadyToWrite = new List<string>();
-                        richTextBox1.Text = null;
-                        combineFunc(getListToCombine(), catalogPathTextBox.Text);
+                        Invoke((Action)delegate
+                        {
+                            progressBar.Value = 0;
+                            progressBar.Maximum = reliableFilesInDirectory.Count;
+                        });
+                        cts = new CancellationTokenSource();
+                        CancellationToken ct = cts.Token;
+                        Thread th1 = new Thread(() => combineFunc(ct));
+                        th1.Name = "Combining thread";
+                        th1.Start();
                     }
                     catch(Exception exc)
                     {
@@ -175,134 +261,175 @@ namespace Managing.ARFF.Files
             {
                 MessageBox.Show("Nothing to combine!");
             }
-            checkedListBoxAll.Enabled = true;
-            button2.Enabled = true;
-            button1.Enabled = true;
-            chooseCatalogButton.Enabled = true;
         }
 
-        private List<string> setCheckedItemsToList()
+        private void enableStopButtons(bool choice)
         {
-            List<string> temp = new List<string>(); 
-            foreach (var attr in checkedListBoxAll.CheckedItems)
+            if (choice == true)
             {
-                temp.Add(attr.ToString());
+                Invoke((Action)delegate
+                {
+                    pauseButton.Enabled = true;
+                    continueButton.Enabled = true;
+                    stopButton.Enabled = true;
+
+                });
             }
-            return temp;
+            else
+            {
+                Invoke((Action)delegate
+                {
+                    pauseButton.Enabled = false;
+                    continueButton.Enabled = false;
+                    stopButton.Enabled = false;
+                });
+            }
         }
 
-        private void combineFunc(List<string> toCombine, string folderPath)
+        private void combineFunc(CancellationToken ct)
         {
+            blockUnblockButtonsForCombine(false);
+            enableStopButtons(true);
+            dataReadyToWrite = new List<string>();
             attributesReadyToWrite = setCheckedItemsToList();
-            string allData;
             string[] seperatedData = null;
             string line;
-            bool fileIsUsable = false;
-            chooseCatalogButton.Enabled = false;
-            combineButton.Enabled = false;
-            foreach(string file in Directory.GetFiles(folderPath, "*.arff", SearchOption.TopDirectoryOnly))
+            foreach (string file in reliableFilesInDirectory)
             {
-                try
+                mre.WaitOne();
+                if (ct.IsCancellationRequested)
                 {
-                    if (Path.GetExtension(file) == ".arff")
+                    return;
+                }
+                Invoke((Action)delegate
+                {
+                    progressBar.PerformStep();
+                });
+                StreamReader ongoingFile = new StreamReader(file);
+                while ((line = ongoingFile.ReadLine()) != null)
+                {
+                    if (line.Contains("@data") == true)
                     {
-                        StreamReader ongoingFile = new StreamReader(file);
-                        if (ongoingFile.ReadLine() == relation)
+                        ongoingFile.ReadLine();
+                        seperatedData = ongoingFile.ReadLine().Split(',');
+                    }
+                }
+                string oneFileData = null;
+                foreach (string temp in attributesReadyToWrite)
+                {
+                    foreach (string attr in listOfAllAttributeNames)
+                    {
+                        if (attr == temp)
                         {
-                            while ((line = ongoingFile.ReadLine()) != null)
-                            {
-                                if (line.Contains("@data") == true)
-                                {
-                                    ongoingFile.ReadLine();
-                                    allData = ongoingFile.ReadLine();
-                                    seperatedData = allData.Split(',');
-                                    if (allData != "" && !string.IsNullOrEmpty(allData) && seperatedData.Length == listOfAllAttributeNames.Count)
-                                    {
-                                        fileIsUsable = true;
-                                    }
-                                }
-                            }
-                            if(fileIsUsable == true)
-                            {
-                                string oneFileData = null;
-                                foreach (string attr in listOfAllAttributeNames)
-                                {
-                                    foreach (string temp in attributesReadyToWrite)
-                                    {
-                                        if (temp == attr)
-                                        {
-                                            if (oneFileData != null)
-                                                oneFileData += ("," + seperatedData[listOfAllAttributeNames.IndexOf(attr)]);
-                                            else
-                                                oneFileData += seperatedData[listOfAllAttributeNames.IndexOf(attr)];
-                                        }
-                                    }
-                                }
-                                dataReadyToWrite.Add(oneFileData);
-                                richTextBox1.Text += $"{oneFileData}\n";
-                                //Console.WriteLine(oneFileData);
-                            }
+                            if (oneFileData != null)
+                                oneFileData += ("," + seperatedData[listOfAllAttributeNames.IndexOf(attr)]);
                             else
-                            {
-                                throw new Exception($"File skipped [{Path.GetFileName(file)}]: \"@data\" tag not found or data is corrupted!");
-                            }
-                        }
-                        else
-                        {
-                            throw new Exception($"File skipped [{Path.GetFileName(file)}]: \"@realation\" tag not found!");
+                                oneFileData += seperatedData[listOfAllAttributeNames.IndexOf(attr)];
+                            continue;
                         }
                     }
-                    else
-                    {
-                        throw new Exception($"File skipped [{Path.GetFileName(file)}]: extention is not \".arff\"!");
-                    }
                 }
-                catch(Exception exc)
-                {
-                    fileIsUsable = false;
-                    Console.WriteLine(exc.Message);
-                }
+                dataReadyToWrite.Add(oneFileData);
             }
-            chooseCatalogButton.Enabled = true;
-            combineButton.Enabled = true;
+            enableStopButtons(false);
+            blockUnblockButtonsForCombine(true);
         }
 
-        private List<string> getListToCombine()
+        private void blockUnblockButtonsForCombine(bool choice)
         {
-            List<string> final = new List<string>();
-            foreach(var attr in checkedListBoxAll.CheckedItems)
+            if(choice == true)
             {
-                final.Add(attr.ToString());
+                Invoke((Action)delegate
+                {
+                    chooseCatalogButton.Enabled = true;
+                    combineButton.Enabled = true;
+                    checkedListBoxAll.Enabled = true;
+                    button1.Enabled = true;
+                    button2.Enabled = true;
+                });
             }
-            return final;
+            else
+            {
+                Invoke((Action)delegate
+                {
+                    chooseCatalogButton.Enabled = false;
+                    combineButton.Enabled = false;
+                    checkedListBoxAll.Enabled = false;
+                    button1.Enabled = false;
+                    button2.Enabled = false;
+                });
+            }
         }
 
         private void button2_Click(object sender, EventArgs e)
         {
-            if (dataReadyToWrite.Count != 0 && attributesReadyToWrite.Count != 0)
+            if (dataReadyToWrite.Count != 0 && attributesReadyToWrite.Count != 0 && attributesReadyToWrite != null)
             {
+                writeToFile();
+            }
+            else
+            {
+                MessageBox.Show("No data to write!");
+            }
+        }
+
+        private void writeToFile()
+        {
+            Thread th = new Thread(() =>
+            {
+                blockUnblockButtonsForCombine(false);
                 List<string> lines = new List<string>();
                 lines.Add($"{relation}\n");
-                foreach(string attr in attributesReadyToWrite)
+                foreach (string attr in attributesReadyToWrite)
                 {
                     lines.Add(attr);
                 }
                 lines.Add($"\n@data\n");
-                foreach(string data in dataReadyToWrite)
+                foreach (string data in dataReadyToWrite)
                 {
                     lines.Add(data);
-                }                string docPath = "C:\\Users\\valde\\Desktop";
+                }
+                string docPath = "C:\\Users\\valde\\Desktop";
                 using (StreamWriter outputFile = new StreamWriter(Path.Combine(docPath, "combined.arff")))
                 {
                     foreach (string line in lines)
                         outputFile.WriteLine(line);
                 }
                 MessageBox.Show("Data succesfully saved to file!");
+                blockUnblockButtonsForCombine(true);
+            });
+            th.Name = "Writing thread";
+            th.Start();
+        }
+
+        private void stopButton_Click(object sender, EventArgs e)
+        {
+            mre.Reset();
+            DialogResult result = MessageBox.Show($"Do you really want to abort this action?", "", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (result == DialogResult.Yes)
+            {
+                cts.Cancel();
+                dataReadyToWrite = new List<string>();
+                attributesReadyToWrite = new List<string>();
+                blockUnblockButtonsForCombine(true);
+                enableStopButtons(false);
+                mre.Set();
+                progressBar.Value = progressBar.Maximum;
             }
             else
             {
-                MessageBox.Show("No data to write!");
+                mre.Set();
             }
+        }
+
+        private void pauseButton_Click(object sender, EventArgs e)
+        {
+            mre.Reset();
+        }
+
+        private void continueButton_Click(object sender, EventArgs e)
+        {
+            mre.Set();
         }
     }
 }
