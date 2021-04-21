@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -15,7 +17,6 @@ namespace Managing.ARFF.Files
         private List<string> reliableFilesInDirectory;
         private CancellationTokenSource cts;
         private string relation;
-
         public Form1()
         {
             InitializeComponent();
@@ -325,8 +326,6 @@ namespace Managing.ARFF.Files
             enableStopButtons(true);
             dataReadyToWrite = new List<string>();
             attributesReadyToWrite = setCheckedItemsToList();
-            string[] seperatedData = null;
-            string line;
             List<int> indexes = new List<int>();
             foreach (string temp in attributesReadyToWrite)
             {
@@ -345,28 +344,20 @@ namespace Managing.ARFF.Files
                 {
                     return;
                 }
-                StreamReader ongoingFile = new StreamReader(file);
-                while ((line = ongoingFile.ReadLine()) != null)
-                {
-                    if (line.Contains("@data") == true)
-                    {
-                        ongoingFile.ReadLine();
-                        seperatedData = ongoingFile.ReadLine().Split(',');
-                    }
-                }
-                dataReadyToWrite.Add(null);
+                string[] seperatedData = File.ReadAllLines(file).Last().Split(',');
+                StringBuilder sb = new StringBuilder();
                 foreach (int index in indexes)
                 {
-                    if (dataReadyToWrite[dataReadyToWrite.Count - 1] != null)
+                    if (sb.Length != 0)
                     {
-                        dataReadyToWrite[dataReadyToWrite.Count - 1] += $",{seperatedData[index]}";
+                        sb.Append($",{seperatedData[index]}");
                     }
                     else
                     {
-                        dataReadyToWrite[dataReadyToWrite.Count - 1] += seperatedData[index];
+                        sb.Append(seperatedData[index]);
                     }
-                    
                 }
+                dataReadyToWrite.Add(sb.ToString());
                 Invoke((Action)delegate
                 {
                     progressBar.PerformStep();
