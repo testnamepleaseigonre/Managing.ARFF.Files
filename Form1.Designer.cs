@@ -175,7 +175,7 @@ namespace Managing.ARFF.Files
             this.Controls.Add(this.chooseCatalogButton);
             this.Controls.Add(this.catalogPathTextBox);
             this.Name = "Form1";
-            this.Text = "Form1";
+            this.Text = "ARFF MANAGEMENT";
             this.ResumeLayout(false);
             this.PerformLayout();
 

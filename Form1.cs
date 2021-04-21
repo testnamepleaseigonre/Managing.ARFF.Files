@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -40,6 +39,8 @@ namespace Managing.ARFF.Files
             progressBar.Step = 1;
         }
 
+        delegate void Runnable();
+
         private void chooseCatalogButton_Click(object sender, EventArgs e)
         {
             FolderBrowserDialog dialog = new FolderBrowserDialog();
@@ -59,6 +60,7 @@ namespace Managing.ARFF.Files
         {
             Thread th = new Thread(() =>
             {
+                unavailableToClose(true);
                 blockUnblockButtonsForCombine(false);
                 reliableFilesInDirectory = new List<string>();
                 int attrCount = 0;
@@ -66,8 +68,17 @@ namespace Managing.ARFF.Files
                 string allData;
                 string line;
                 bool fileHasDataTag = false;
+                Invoke((Action)delegate
+                {
+                    progressBar.Value = 0;
+                    progressBar.Maximum = Directory.GetFiles(folderPath, "*.arff", SearchOption.TopDirectoryOnly).Length;
+                });
                 foreach (string file in Directory.GetFiles(folderPath, "*.arff", SearchOption.TopDirectoryOnly))
                 {
+                    Invoke((Action)delegate
+                    {
+                        progressBar.PerformStep();
+                    });
                     try
                     {
                         if (Path.GetExtension(file) == ".arff")
@@ -124,9 +135,9 @@ namespace Managing.ARFF.Files
                     }
                     attrCount = 0;
                     fileHasDataTag = false;
-                    
                 }
                 blockUnblockButtonsForCombine(true);
+                unavailableToClose(false);
             });
             th.Name = "SetReliableFiles thread";
             th.Start();
@@ -150,6 +161,7 @@ namespace Managing.ARFF.Files
         {
             Thread th = new Thread(() =>
             {
+                unavailableToClose(true);
                 blockUnblockButtonsForCombine(false);
                 string line;
                 dataReadyToWrite = new List<string>();
@@ -174,6 +186,7 @@ namespace Managing.ARFF.Files
                 }
                 moveAttributesToListBox();
                 blockUnblockButtonsForCombine(true);
+                unavailableToClose(false);
             });
             th.Name = "GetAttributes thread";
             th.Start();
@@ -286,14 +299,45 @@ namespace Managing.ARFF.Files
             }
         }
 
+        private void unavailableToClose(bool choice)
+        {
+            if(choice == true)
+            {
+                Invoke((Action)delegate
+                {
+                    this.FormBorderStyle = FormBorderStyle.None;
+                });
+            }
+            else
+            {
+                Invoke((Action)delegate
+                {
+                    this.FormBorderStyle = FormBorderStyle.Sizable;
+                });
+
+            }
+        }
+
         private void combineFunc(CancellationToken ct)
         {
+            unavailableToClose(true);
             blockUnblockButtonsForCombine(false);
             enableStopButtons(true);
             dataReadyToWrite = new List<string>();
             attributesReadyToWrite = setCheckedItemsToList();
             string[] seperatedData = null;
             string line;
+            List<int> indexes = new List<int>();
+            foreach (string temp in attributesReadyToWrite)
+            {
+                foreach (string attr in listOfAllAttributeNames)
+                {
+                    if (attr == temp)
+                    {
+                        indexes.Add(listOfAllAttributeNames.IndexOf(attr));
+                    }
+                }
+            }
             foreach (string file in reliableFilesInDirectory)
             {
                 mre.WaitOne();
@@ -301,10 +345,6 @@ namespace Managing.ARFF.Files
                 {
                     return;
                 }
-                Invoke((Action)delegate
-                {
-                    progressBar.PerformStep();
-                });
                 StreamReader ongoingFile = new StreamReader(file);
                 while ((line = ongoingFile.ReadLine()) != null)
                 {
@@ -314,25 +354,27 @@ namespace Managing.ARFF.Files
                         seperatedData = ongoingFile.ReadLine().Split(',');
                     }
                 }
-                string oneFileData = null;
-                foreach (string temp in attributesReadyToWrite)
+                dataReadyToWrite.Add(null);
+                foreach (int index in indexes)
                 {
-                    foreach (string attr in listOfAllAttributeNames)
+                    if (dataReadyToWrite[dataReadyToWrite.Count - 1] != null)
                     {
-                        if (attr == temp)
-                        {
-                            if (oneFileData != null)
-                                oneFileData += ("," + seperatedData[listOfAllAttributeNames.IndexOf(attr)]);
-                            else
-                                oneFileData += seperatedData[listOfAllAttributeNames.IndexOf(attr)];
-                            continue;
-                        }
+                        dataReadyToWrite[dataReadyToWrite.Count - 1] += $",{seperatedData[index]}";
                     }
+                    else
+                    {
+                        dataReadyToWrite[dataReadyToWrite.Count - 1] += seperatedData[index];
+                    }
+                    
                 }
-                dataReadyToWrite.Add(oneFileData);
+                Invoke((Action)delegate
+                {
+                    progressBar.PerformStep();
+                });
             }
             enableStopButtons(false);
             blockUnblockButtonsForCombine(true);
+            unavailableToClose(false);
         }
 
         private void blockUnblockButtonsForCombine(bool choice)
@@ -415,6 +457,7 @@ namespace Managing.ARFF.Files
                 enableStopButtons(false);
                 mre.Set();
                 progressBar.Value = progressBar.Maximum;
+                unavailableToClose(false);
             }
             else
             {
